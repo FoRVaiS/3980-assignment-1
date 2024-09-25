@@ -1,36 +1,33 @@
 #include "filters.h"
-#include <errno.h>
-#include <fcntl.h>
-#include <memory.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include "process.h"
+#include <errno.h>     // errno descriptors
+#include <fcntl.h>     // open() flags
+#include <stdio.h>     // [io] printf, fd(1, 2, 3)
+#include <stdlib.h>    // EXIT codes
+#include <unistd.h>    // getopt
 
 #define USER_OPEN_PERMS 0644
 
-typedef unsigned long ulong;
-typedef void (*filter_func)(char *str);
-
 int main(int argc, char *argv[])
 {
-    int  opt       = -1;
-    int  fd_input  = -1;
-    int  fd_output = -1;
-    char letter[2] = {' ', '\0'};
+    int opt = -1;
+
+    int fd_input  = -1;
+    int fd_output = -1;
 
     const char *filename_input  = NULL;
     const char *filename_output = NULL;
-    char       *filter          = NULL;
-    filter_func transformer     = NULL;
+    char       *filter_name     = NULL;
+    filter_func filter          = NULL;
 
-    while((opt = getopt(argc, argv, "i:o:f:")) != -1)
+    int process_ret = EXIT_SUCCESS;
+
+    while((opt = getopt(argc, argv, "i:o:f:h")) != -1)
     {
         switch(opt)
         {
             case 'f':
-                filter = optarg;
+                filter_name = optarg;
                 break;
             case 'i':
                 filename_input = optarg;
@@ -38,8 +35,9 @@ int main(int argc, char *argv[])
             case 'o':
                 filename_output = optarg;
                 break;
+            case 'h':
             default:
-                fprintf(stderr, "Usage: %s [-a] [-b value] [-c]\n", argv[0]);
+                fprintf(stderr, "Usage: %s -i <input_path> -o <output_path> -f <\"upper\", \"lower\", \"null\">\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
@@ -47,42 +45,19 @@ int main(int argc, char *argv[])
     // INPUT VALIDATION
     if(filename_input == NULL)
     {
-        printf("You must supply a valid filepath to your input file");
+        printf("Missing input file option.\n");
         return EXIT_FAILURE;
     }
 
     if(filename_output == NULL)
     {
-        printf("You must supply a valid filepath to the desired output file");
+        printf("Missing output file option.\n");
         return EXIT_FAILURE;
     }
 
-    if(filter == NULL)
+    if(filter_name == NULL)
     {
-        printf("You must choose at least one of three filters: upper, lower, null");
-        return EXIT_FAILURE;
-    }
-
-    filter_lower(filter);    // Convert the filter selector to lowercase
-
-    if(strcmp(filter, "upper") == 0)
-    {
-        transformer = &filter_upper;
-    }
-    if(strcmp(filter, "lower") == 0)
-    {
-        transformer = &filter_lower;
-    }
-    if(strcmp(filter, "null") == 0)
-    {
-        transformer = &filter_none;
-    }
-
-    // These is a case where the user enters an invalid filter
-    // and the filter won't be selected
-    if(transformer == NULL)
-    {
-        printf("\"%s\" is not a valid filter, please choose one of three valid filters: upper, lower, null", filter);
+        printf("Missing filter option.\n");
         return EXIT_FAILURE;
     }
 
@@ -92,15 +67,11 @@ int main(int argc, char *argv[])
     {
         if(errno == ENOENT)
         {
-            printf("\"%s\" does not exist.\n", filename_input);
-        }
-        else if(errno == EISDIR)
-        {
-            printf("\"%s\" is a directory, but should be a file.\n", filename_input);
+            printf("Input file: \"%s\" does not exist.\n", filename_input);
         }
         else
         {
-            printf("Failed to open file: %s\n", filename_input);
+            printf("Failed to open input file: %s\n", filename_input);
         }
 
         return EXIT_FAILURE;
@@ -116,33 +87,22 @@ int main(int argc, char *argv[])
         }
         else
         {
-            printf("Failed to open file: %s\n", filename_output);
+            printf("Failed to open output file: %s\n", filename_output);
         }
 
         return EXIT_FAILURE;
     }
 
-    do
+    filter = use_filter(filter_name);
+    if(filter == NULL)
     {
-        const ssize_t read_ret = read(fd_input, &letter, 1);
-        transformer(letter);
-        write(fd_output, &letter, 1);
+        return EXIT_FAILURE;
+    }
 
-        if(read_ret == 0)
-        {
-            break;    // EOF
-        }
-
-        if(read_ret == -1)
-        {
-            printf("Reading error.");
-            return EXIT_FAILURE;
-        }
-
-    } while(*letter != '\0');
+    process_ret = process(fd_input, fd_output, filename_input, filter);
 
     close(fd_input);
     close(fd_output);
 
-    return EXIT_SUCCESS;
+    return process_ret;
 }
